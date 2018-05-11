@@ -56,7 +56,7 @@ async def handle_message(context: BotContext) -> web.Response:
 
 async def handle_conversation_update(context: BotContext) -> web.Response:
     if context.request.members_added[0].id != context.request.recipient.id:
-        response = await create_reply_activity(context.request, 'Welcome to the Echo Adapter Bot!')
+        response = await create_reply_activity(context.request, 'Welcome to Thesaurus Bot server!')
         await context.send_activity(response)
     return web.Response(status=200)
 
