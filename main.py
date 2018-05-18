@@ -4,10 +4,19 @@
 from aiohttp import (web, ClientSession)
 from botbuilder.schema import (Activity, ActivityTypes)
 from botbuilder.core import (BotFrameworkAdapter, BotFrameworkAdapterSettings, BotContext)
-import urllib.parse
+import json
 
 
-YOUR_KEY = 'test_only'
+# AZURE services keys withheld here... Git yer own.
+SECOND_KEY = ''
+AZURE_KEY = ''
+
+
+SENTIMENT_URL = 'https://westus.api.cognitive.microsoft.com/text/analytics/v2.0/sentiment'
+HEADERS = {
+    'Ocp-Apim-Subscription-Key': AZURE_KEY,
+    'content-type': 'application/json'
+}
 
 APP_ID = ''
 APP_PASSWORD = ''
@@ -15,13 +24,17 @@ PORT = 9000
 SETTINGS = BotFrameworkAdapterSettings(APP_ID, APP_PASSWORD)
 ADAPTER = BotFrameworkAdapter(SETTINGS)
 
-async def fetch_synonyms(wrd):
-    params = {'language':'en_US', 'output':'json'}
-    params['word'] = wrd
-    params['key'] = YOUR_KEY
-    url = 'http://thesaurus.altervista.org/thesaurus/v1?{}'.format(urllib.parse.urlencode(params))
+
+async def fetch_sentiment(review):
+    body = { 'documents': [
+        {
+            'language': 'en',
+            'id': '1',
+            'text': '"{}"'.format(review)
+        }
+    ]}
     async with ClientSession() as session:
-        async with session.get(url) as response:
+        async with session.post(SENTIMENT_URL, data=json.dumps(body), headers=HEADERS ) as response:
             return( await response.json() )
 
 async def create_reply_activity(request_activity, text) -> Activity:
@@ -36,19 +49,9 @@ async def create_reply_activity(request_activity, text) -> Activity:
 
 
 async def handle_message(context: BotContext) -> web.Response:
-    ans = ''
-    synonyms = await fetch_synonyms(context.request.text)
-    if ('response' in synonyms):
-        for el in synonyms['response']:
-            ans += "{}{}".format('\n', el['list']['synonyms'])
-        ans = ans.replace('|', '\n')
-    elif ('error' in synonyms):
-        ans = synonyms['error']
-    else:
-        ans = 'Sorry, error looking up {}'.format(context.request.text)
-
+    sentiment = await fetch_sentiment(context.request.text)
     response = await create_reply_activity(
-        context.request, 'You requested synonyms for "{}"\n{}.'.format(context.request.text, ans)
+        context.request, 'Sentiment response for: "{}" is:\n{}.'.format(context.request.text, sentiment)
     )
     await context.send_activity(response)
     return web.Response(status=202)
@@ -56,7 +59,7 @@ async def handle_message(context: BotContext) -> web.Response:
 
 async def handle_conversation_update(context: BotContext) -> web.Response:
     if context.request.members_added[0].id != context.request.recipient.id:
-        response = await create_reply_activity(context.request, 'Welcome to Thesaurus Bot server!')
+        response = await create_reply_activity(context.request, 'Welcome to Cory\'s sentiment server!')
         await context.send_activity(response)
     return web.Response(status=200)
 
