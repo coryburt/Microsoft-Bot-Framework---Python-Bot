@@ -5,24 +5,77 @@ from aiohttp import (web, ClientSession)
 from botbuilder.schema import (Activity, ActivityTypes)
 from botbuilder.core import (BotFrameworkAdapter, BotFrameworkAdapterSettings, BotContext)
 import json
+import re
 
 
 # AZURE services keys withheld here... Git yer own.
-SECOND_KEY = ''
 AZURE_KEY = ''
-
+SECOND_KEY = ''
 
 SENTIMENT_URL = 'https://westus.api.cognitive.microsoft.com/text/analytics/v2.0/sentiment'
+KEYPHRASE_URL = 'https://westus.api.cognitive.microsoft.com/text/analytics/v2.0/keyPhrases'
+
 HEADERS = {
     'Ocp-Apim-Subscription-Key': AZURE_KEY,
     'content-type': 'application/json'
 }
+
+ABOUT_DAISY = False
+ACCUMULATED_SENTIMENT = 0.0
+DAISY_QUERY_ACTIVE = True
+
+IS_DAISY = re.compile(r'\bdaisy\b', re.I)
 
 APP_ID = ''
 APP_PASSWORD = ''
 PORT = 9000
 SETTINGS = BotFrameworkAdapterSettings(APP_ID, APP_PASSWORD)
 ADAPTER = BotFrameworkAdapter(SETTINGS)
+
+
+def analyze_sentiment(sentiment):
+    global ACCUMULATED_SENTIMENT
+
+    score = float(sentiment['documents'][0]['score'])
+    if score < 0.5:
+        ACCUMULATED_SENTIMENT = -1
+    elif score > 0.5:
+        ACCUMULATED_SENTIMENT = 1
+    else:
+        ACCUMULATED_SENTIMENT = 0
+
+
+def test_for_daisy(keyPhrases):
+    global ABOUT_DAISY
+    global DAISY_QUERY_ACTIVE
+
+    score = keyPhrases['documents'][0]['keyPhrases']
+    result = list(filter(IS_DAISY.match, score))
+
+    if len(result) > 0:
+        ABOUT_DAISY = True
+        DAISY_QUERY_ACTIVE = False
+
+
+def answer_maker():
+    global ABOUT_DAISY
+    global ACCUMULATED_SENTIMENT
+    global DAISY_QUERY_ACTIVE
+
+    ans = 'These feelings seem to be '
+    if ACCUMULATED_SENTIMENT > 0:
+        ans += 'on the positive side.\n'
+    elif ACCUMULATED_SENTIMENT < 0:
+        ans += 'on the negative side.\n'
+    else:
+        ans += 'fairly neutral.\n'
+
+    if DAISY_QUERY_ACTIVE == True:
+        ans += "Enter \"Daisy\" if we are still talking about Daisy's performance?\n"
+    else:
+        ans += 'Anything more to add?\n'
+
+    return ans
 
 
 async def fetch_sentiment(review):
@@ -35,7 +88,21 @@ async def fetch_sentiment(review):
     ]}
     async with ClientSession() as session:
         async with session.post(SENTIMENT_URL, data=json.dumps(body), headers=HEADERS ) as response:
-            return( await response.json() )
+            return await response.json()
+
+
+async def fetch_keyphrases(review):
+    body = { 'documents': [
+        {
+            'language': 'en',
+            'id': '1',
+            'text': '"{}"'.format(review)
+        }
+    ]}
+    async with ClientSession() as session:
+        async with session.post(KEYPHRASE_URL, data=json.dumps(body), headers=HEADERS ) as response:
+            return await response.json()
+
 
 async def create_reply_activity(request_activity, text) -> Activity:
     return Activity(
@@ -50,8 +117,12 @@ async def create_reply_activity(request_activity, text) -> Activity:
 
 async def handle_message(context: BotContext) -> web.Response:
     sentiment = await fetch_sentiment(context.request.text)
+    keyphrases = await fetch_keyphrases(context.request.text)
+    test_for_daisy(keyphrases)
+    analyze_sentiment(sentiment)
+    message = answer_maker()
     response = await create_reply_activity(
-        context.request, 'Sentiment response for: "{}" is:\n{}.'.format(context.request.text, sentiment)
+        context.request, message
     )
     await context.send_activity(response)
     return web.Response(status=202)
@@ -59,7 +130,10 @@ async def handle_message(context: BotContext) -> web.Response:
 
 async def handle_conversation_update(context: BotContext) -> web.Response:
     if context.request.members_added[0].id != context.request.recipient.id:
-        response = await create_reply_activity(context.request, 'Welcome to Cory\'s sentiment server!')
+        msg = 'Welcome to the review aggregator.\n'
+        msg += "Please tell me what you thought of Daisy Ridley's\n"
+        msg += "performance as \"Rey\" in Star Wars: The Force Awakens"
+        response = await create_reply_activity(context.request, msg)
         await context.send_activity(response)
     return web.Response(status=200)
 
